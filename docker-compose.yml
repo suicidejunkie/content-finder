@@ -1,0 +1,9 @@
+version: '3.5'
+
+services:
+  content-finder:
+    container_name: content-finder
+    build: .
+    volumes:
+      - ./content.db:/app/content.db
+      - ./channel-ids.txt:/app/channel-ids.txt
