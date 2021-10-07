@@ -80,7 +80,8 @@ def add_to_cytube(content_list: list) -> None:
 
     driver = webdriver.Chrome(options=chrome_options)
     driver.delete_all_cookies()
-    driver.get(os.getenv('CYTUBE_URL'))
+    url = os.getenv('CYTUBE_URL')
+    driver.get(url)
 
     # wait for load
     while True:
