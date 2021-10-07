@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup as bs
 from selenium import webdriver
@@ -20,47 +21,81 @@ YT_BASE_URL = 'https://www.youtube.com/watch?v='
 
 con = sqlite3.connect('content.db')
 cur = con.cursor()
-cur.execute('CREATE TABLE IF NOT EXISTS content (videoId TEXT)')
+cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text primary key, name text, datetime text)')
 con.commit()
 
-def find_content() -> list:
-    content = []
+def init_db() -> None:
+    """
+    Reads from channel-ids.txt and inserts into DB. Inserts date of most recent video.
+    
+    channels-ids.txt must be in the form:
+    # CHANNEL_NAME
+    CHANNEL_ID
+    # CHANNEL_NAME
+    CHANNEL_NAME
+    """
     with open('channel-ids.txt') as file:
-        while (channel := file.readline().rstrip()):
-            if channel.startswith('#'):
-                continue
-            print(f'Getting content for channel id: {channel}')
-            channel = f'https://www.youtube.com/feeds/videos.xml?channel_id={channel}'
+        for line in file:
+            name = line[1:].strip()
+            # this will raise StopIteration if you channel-ids doesn't have even lines
+            # i.e. if someone doesn't read the readme
+            channel_id = next(file).strip()
+
+            # Get most recent published date for datetime in DB
+            channel = f'https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}'
             resp = requests.get(channel)
             page = resp.text
             soup = bs(page, 'lxml')
+            entry = soup.find_all('entry')[0]
+            published = entry.find_all('published')[0].text
 
-            limit = 4
-            i = 0
-            for item in soup.find_all('entry'):
-                if '#shorts' in item.find_all('title')[0].text:
-                    print('Skipping #short :)')
-                    continue
-                for video_id in item.find_all('yt:videoid'):
-                    if i == limit:
-                        continue
-                    i += 1
+            try:
+                cur.execute('INSERT INTO content(channelId, name, datetime) VALUES(?,?,?)',
+                           (channel_id, name, published,))
+                con.commit()
+            except sqlite3.IntegrityError:
+                print(f'{name} already in db, skipping.')
 
-                    video_id = video_id.text
+def find_content() -> list:
+    content = []
 
-                    # If we've already seen it then let's skip it
-                    cur.execute('SELECT * FROM content where videoId=(?)', (video_id,))
-                    if len(cur.fetchall()) != 0:
-                        print('Already seen this video, skipping: {}'.format(video_id))
-                        continue
+    cur.execute('SELECT * FROM content')
+    for row in cur:
+        channel_id = row[0]
+        name = row[1]
+        dt = datetime.fromisoformat(row[2])
+        print(f'Getting content for: {name}')
+        
+        channel = f'https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}'
+        resp = requests.get(channel)
+        page = resp.text
+        soup = bs(page, 'lxml')
 
-                    # Insert in reverse order so vids are in the order they were
-                    # released in (mainly for wranglerstar)
-                    content.insert(0, f'https://www.youtube.com/watch?v={video_id}')
+        new_dt = None
+        for item in soup.find_all('entry'):
+            if '#shorts' in item.find_all('title')[0].text:
+                print('Skipping #short.')
+                continue
+            published = datetime.fromisoformat(item.find_all('published')[0].text)
 
-                    # Insert into db
-                    cur.execute('INSERT INTO content(videoId) VALUES(?)', (video_id,))
-                    con.commit()
+            if published < dt or published == dt:
+                print(f'No more new videos for {name}')
+                break
+
+            video_id = item.find_all('yt:videoid')[0].text
+            
+            # Insert in reverse order so vids are in the order they were
+            content.insert(0, f'https://www.youtube.com/watch?v={video_id}')
+
+            # Set new datetime for DB
+            if not new_dt:
+                new_dt = published
+        
+        if new_dt:
+            # Update datetime in DB
+            cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
+                       (str(new_dt), channel_id,))
+            con.commit()
 
     return content
 
@@ -91,7 +126,7 @@ def add_to_cytube(content_list: list) -> None:
         except TimeoutException:
             print('waiting for page to load...')
 
-    # login - if fails to login, assume already logged in :)
+    # login - if fails to login, assume already logged in.
     try:
         username = os.getenv('CYTUBE_USERNAME')
         password = os.getenv('CYTUBE_PASSWORD')
@@ -127,5 +162,6 @@ def add_to_cytube(content_list: list) -> None:
 
 
 if __name__ == '__main__':
+    init_db()
     content = find_content()
     add_to_cytube(content)
