@@ -18,11 +18,7 @@ load_dotenv()
 
 YT_BASE_URL = 'https://www.youtube.com/watch?v='
 
-
 con = sqlite3.connect('content.db')
-cur = con.cursor()
-cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text primary key, name text, datetime text)')
-con.commit()
 
 def init_db() -> None:
     """
@@ -34,6 +30,10 @@ def init_db() -> None:
     # CHANNEL_NAME
     CHANNEL_NAME
     """
+    cur = con.cursor()
+    cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text primary key, name text, datetime text)')
+    con.commit()
+
     with open('channel-ids.txt') as file:
         for line in file:
             name = line[1:].strip()
@@ -55,9 +55,11 @@ def init_db() -> None:
                 con.commit()
             except sqlite3.IntegrityError:
                 print(f'{name} already in db, skipping.')
+    cur.close()
 
 def find_content() -> list:
     content = []
+    cur = con.cursor()
 
     cur.execute('SELECT * FROM content')
     for row in cur:
@@ -90,12 +92,15 @@ def find_content() -> list:
             # Set new datetime for DB
             if not new_dt:
                 new_dt = published
-        
+
         if new_dt:
             # Update datetime in DB
-            cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
-                       (str(new_dt), channel_id,))
+            update_cur = con.cursor()
+            update_cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
+                              (str(new_dt), channel_id,))
             con.commit()
+            update_cur.close()
+    cur.close()
 
     return content
 
