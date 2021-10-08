@@ -2,7 +2,6 @@ import os
 import sqlite3
 import requests
 import socketio
-import json
 from datetime import datetime
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup as bs
@@ -10,7 +9,7 @@ from bs4 import BeautifulSoup as bs
 
 load_dotenv()
 
-YT_BASE_URL = 'https://www.youtube.com/watch?v='
+CONNECTED = False
 
 con = sqlite3.connect('content.db')
 
@@ -109,62 +108,71 @@ def add_to_cytube(content_list: list) -> None:
     cytube_username = os.getenv('CYTUBE_USERNAME')
     cytube_password = os.getenv('CYTUBE_PASSWORD')
 
-    #JSON shitter 9k
     socketConfig = f'{url}socketconfig/{channel_name}.json'
     resp = requests.get(socketConfig)
-    servers = json.loads(resp.text)
+    servers = resp.json()
     socket_url = ""
 
     for server in servers['servers']:
         if server["secure"]:
             socket_url = server["url"]
-            break # if first record is secure may as well break out of loop
-        elif not server["secure"]:
-            socket_url = server["url"]
+            break
+    
+    if not socket_url:
+        raise socketio.exception.ConnectionError('Unable to find a secure socket to connect to')
 
     sio = socketio.Client()
-    if socket_url:
-        # built in events
-        @sio.event
-        def connect():
-            print("I'm connected!")
 
-        @sio.event
-        def connect_error(data):
-            print("The connection failed!")
+    # built in events
+    @sio.event
+    def connect():
+        print("I'm connected!")
+        global CONNECTED
+        CONNECTED = True
 
-        @sio.event
-        def disconnect():
-            print("I'm disconnected!")
+    @sio.event
+    def connect_error(data):
+        print("The connection failed!")
 
-        # Cytube events
+    @sio.event
+    def disconnect():
+        print("I'm disconnected!")
 
-        # rec'd when connected to channel
-        @sio.on('channelOpts')
-        def on_connect(resp):
-            print(resp)
+    # Cytube events
 
-        # rec'd when logging in
-        @sio.on('login')
-        def on_connect(resp):
-            print(resp)
+    # rec'd when connected to channel
+    @sio.on('channelOpts')
+    def on_connect(resp):
+        print(resp)
 
-        # playlist as json
-        @sio.on('playlist')
-        def on_connect(resp):
-            print(resp)
+    # rec'd when logging in
+    @sio.on('login')
+    def on_connect(resp):
+        print(resp)
 
-        sio.connect(socket_url)
-        print('sid is', sio.sid)
+    # playlist as json
+    @sio.on('playlist')
+    def on_connect(resp):
+        print(resp)
+
+    sio.connect(socket_url)
+
+    # .connect doesn't block, and in this version I can't force it to
+    # Hence this solution...
+    while not CONNECTED:
         sio.sleep(1)
-        sio.emit('joinChannel', {'name': channel_name})
-        sio.sleep(1)
-        sio.emit('login', {"name": cytube_username, "pw": cytube_password})
-        sio.sleep(1)
-        for contents in content_list:
-            sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
-            sio.sleep(0.1)
-        sio.disconnect()
+
+    sio.sleep(1)
+    sio.emit('joinChannel', {'name': channel_name})
+    sio.sleep(1)
+    sio.emit('login', {"name": cytube_username, "pw": cytube_password})
+    sio.sleep(1)
+
+    for contents in content_list:
+        sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
+        sio.sleep(0.1)
+
+    sio.disconnect()
 
 if __name__ == '__main__':
     init_db()
