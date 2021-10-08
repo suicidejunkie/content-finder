@@ -1,17 +1,11 @@
 import os
-import time
 import sqlite3
 import requests
+import socketio
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup as bs
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
 
 
 load_dotenv()
@@ -87,7 +81,7 @@ def find_content() -> list:
             video_id = item.find_all('yt:videoid')[0].text
             
             # Insert in reverse order so vids are in the order they were
-            content.insert(0, f'https://www.youtube.com/watch?v={video_id}')
+            content.insert(0, video_id)
 
             # Set new datetime for DB
             if not new_dt:
@@ -109,62 +103,68 @@ def add_to_cytube(content_list: list) -> None:
     if not content_list:
         return
 
-    chrome_options = Options()
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--profile-directory=Default')
-    chrome_options.add_argument('--user-data-dir=~/.config/google-chrome')
-
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.delete_all_cookies()
+    print(f'Videos to be added: {len(content_list)}')
     url = os.getenv('CYTUBE_URL')
-    driver.get(url)
+    channel_name = os.getenv('CYTUBE_URL_CHANNEL_NAME')
+    cytube_username = os.getenv('CYTUBE_USERNAME')
+    cytube_password = os.getenv('CYTUBE_PASSWORD')
 
-    # wait for load
-    while True:
-        try:
-            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.ID, 'chanjs-allow-prompt')))
-            break
-        except TimeoutException:
-            print('waiting for page to load...')
+    #JSON shitter 9k
+    socketConfig = f'{url}socketconfig/{channel_name}.json'
+    resp = requests.get(socketConfig)
+    servers = json.loads(resp.text)
+    socket_url = ""
 
-    # login - if fails to login, assume already logged in.
-    try:
-        username = os.getenv('CYTUBE_USERNAME')
-        password = os.getenv('CYTUBE_PASSWORD')
-        u = driver.find_element_by_id('username')
-        u.send_keys(username)
-        p = driver.find_element_by_id('password')
-        p.send_keys(password)
-        p.send_keys(Keys.ENTER)
-    except Exception:
-        pass
+    for server in servers['servers']:
+        if server["secure"]:
+            socket_url = server["url"]
+            break # if first record is secure may as well break out of loop
+        elif not server["secure"]:
+            socket_url = server["url"]
 
-    # wait for load (login causes reload)
-    while True:
-        try:
-            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.ID, 'chanjs-allow-prompt')))
-            break
-        except TimeoutException:
-            print('waiting for page to load...')
+    sio = socketio.Client()
+    if socket_url:
+        # built in events
+        @sio.event
+        def connect():
+            print("I'm connected!")
 
-    # Open mediaurl
-    driver.find_element_by_id('showmediaurl').click()
+        @sio.event
+        def connect_error(data):
+            print("The connection failed!")
 
-    # add content to end of queue
-    for content in content_list:
-        print(f'Adding content to cytube: {content}')
-        mediaurl = driver.find_element_by_id('mediaurl')
-        mediaurl.send_keys(content)
-        driver.find_element_by_id('queue_end').click()
-        time.sleep(2)
+        @sio.event
+        def disconnect():
+            print("I'm disconnected!")
 
-    # Done - enjoy your content :)
-    driver.quit()
+        # Cytube events
 
+        # rec'd when connected to channel
+        @sio.on('channelOpts')
+        def on_connect(resp):
+            print(resp)
+
+        # rec'd when logging in
+        @sio.on('login')
+        def on_connect(resp):
+            print(resp)
+
+        # playlist as json
+        @sio.on('playlist')
+        def on_connect(resp):
+            print(resp)
+
+        sio.connect(socket_url)
+        print('sid is', sio.sid)
+        sio.sleep(1)
+        sio.emit('joinChannel', {'name': channel_name})
+        sio.sleep(1)
+        sio.emit('login', {"name": cytube_username, "pw": cytube_password})
+        sio.sleep(1)
+        for contents in content_list:
+            sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
+            sio.sleep(0.1)
+        sio.disconnect()
 
 if __name__ == '__main__':
     init_db()
