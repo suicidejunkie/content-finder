@@ -1,0 +1,23 @@
+{
+  "name": "content-finder",
+  "version": "1.0.0",
+  "description": "Make `.env` with `CYTUBE_URL`, `CYTUBE_URL_CHANNEL_NAME`, `CYTUBE_USERNAME`, and `CYTUBE_PASSWORD`.",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suicidejunkie/content-finder.git"
+  },
+  "author": "suicidejunkie",
+  "license": "WTFPL",
+  "bugs": {
+    "url": "https://github.com/suicidejunkie/content-finder/issues"
+  },
+  "homepage": "https://github.com/suicidejunkie/content-finder#readme",
+  "dependencies": {
+    "dotenv": "^10.0.0",
+    "sqlite3": "^5.0.2"
+  }
+}

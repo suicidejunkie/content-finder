@@ -1,15 +1,10 @@
-FROM python:3.9-slim-buster
+FROM node:12-buster-slim
 
-WORKDIR /app
+WORKDIR /usr/src/app
 
-COPY ./requirements.txt .
+COPY package*.json ./
+RUN npm install
 
-RUN python -m pip install -r requirements.txt
+COPY app.js .
 
-COPY ./main.py .
-
-COPY ./.env .
-
-ENV PYTHONUNBUFFERED=1
-
-CMD ["python", "main.py"]
+CMD ["npm", "run", "start"]
