@@ -1,5 +1,5 @@
 # content-finder
-
+TODO: Update this :)
 # Setup
 ## Env fie
 Make `.env` with `CYTUBE_URL`, `CYTUBE_URL_CHANNEL_NAME`, `CYTUBE_USERNAME`, and `CYTUBE_PASSWORD`.
