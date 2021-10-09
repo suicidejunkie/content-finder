@@ -129,7 +129,6 @@ function find_content(_callback) {
                                 }
 
                                 var videoId = entry['yt:videoId'][0];
-                                console.log(`[[[[[[[[[[[[[[[[[[Adding: ${videoId}, from ${name}]]]]]]]]]]]]]`);
 
                                 // Insert in reverse order so vids are in the order they were released
                                 content.unshift(videoId);
@@ -141,13 +140,12 @@ function find_content(_callback) {
                             });
                             Promise.all(entries).then(() => {
                                 if (newDt !== null) {
-                                    console.log('TODO: Update datetime in DB...');
-                                    db.all(sql, (err, rows) => {
+                                    sql = 'UPDATE content SET datetime = ? WHERE channelId = ?'
+                                    db.run(sql, [newDt, channelId], (err, rows) => {
                                         if (err) {
                                             return console.error(err.message);
                                         }
                                         if (idx === rows.length - 1) {
-                                            console.log(`last loop, row: ${JSON.stringify(row)}`)
                                             // Resolve promise
                                             resolve();
                                         }
@@ -164,7 +162,6 @@ function find_content(_callback) {
     });
 
     prom.then(() => {
-        console.log('*************************** CALLING BACK :)))) ********************************')
         return _callback(content);
     });
 }
@@ -207,13 +204,7 @@ function add_to_cytube(contentArr, _callback) {
 
             socket.on('connect', (connRes) => {
                 console.log(`Socket connected, res: ${connRes}`);
-                socket.emit('joinChannel', {'name': channel_name}) //, (joinRes) => {
-                    // console.log(`Joined channel, res: ${joinRes}`);
-                    // socket.emit('login', {"name": cytube_username, "pw": cytube_password}, (loginRes) => {
-                    //     console.log(`Logged in, res: ${loginRes}`);
-                    //     return _callback();
-                    // });
-                // });
+                socket.emit('joinChannel', {'name': channel_name});
             });
 
             socket.on('channelOpts', (res) =>{
@@ -223,6 +214,9 @@ function add_to_cytube(contentArr, _callback) {
 
             socket.on('login', (res) => {
                 console.log(`Logged in, res: ${res}`);
+                contentArr.forEach((content) => {
+                    socket.emit('queue', {"id": content, "type": "yt", "pos": "end", "temp": true});
+                });
             });
         });
     }).on('error', (err) => {
@@ -244,7 +238,7 @@ const db = new sqlite3.Database('content.db', (err) => {
                     if (err) {
                         return console.log(err.message);
                     }
-                    console.log('DB connection closed successfully. ***********************************')
+                    console.log('DB connection closed successfully.');
                 });
             });
         });
