@@ -9,8 +9,11 @@ from bs4 import BeautifulSoup as bs
 
 load_dotenv()
 
-sio = socketio.Client()
 con = sqlite3.connect('content.db')
+
+# Global variables for sockets
+sio = socketio.Client()
+queue_resp = None
 
 def init_db() -> None:
     """
@@ -47,6 +50,12 @@ def init_db() -> None:
                 con.commit()
             except sqlite3.IntegrityError:
                 print(f'{name} already in db, skipping.')
+
+    # Code for testing, change date as appropriate
+    # fix = '2021-10-09T00:00:00+00:00'
+    # cur.execute('UPDATE content SET datetime=?', (fix,))
+    # con.commit()
+
     cur.close()
 
 def find_content() -> list:
@@ -77,7 +86,7 @@ def find_content() -> list:
                 break
 
             video_id = item.find_all('yt:videoid')[0].text
-            
+
             # Insert in reverse order so vids are in the order they were
             content.insert(0, video_id)
 
@@ -120,46 +129,49 @@ def add_to_cytube(content_list: list) -> None:
     if not socket_url:
         raise socketio.exception.ConnectionError('Unable to find a secure socket to connect to')
 
-    # built in events
     @sio.event
     def connect():
         print("I'm connected!")
         global sio
         sio.emit('joinChannel', {'name': channel_name})
 
-    @sio.event
-    def connect_error(data):
-        print("The connection failed!")
-
-    @sio.event
-    def disconnect():
-        print("I'm disconnected!")
-
-    # Cytube events
-
-    # rec'd when connected to channel
     @sio.on('channelOpts')
     def channel_opts(resp):
         print(resp)
         global sio
         sio.emit('login', {"name": cytube_username, "pw": cytube_password})
 
-    # rec'd when logging in
     @sio.on('login')
     def login(resp):
         print(resp)
+        global queue_resp
         global sio
-        for contents in content_list:
-            sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
-            sio.sleep(0.1)
-
+        for content in content_list:
+            sio.emit('queue', {"id": content, "type": "yt", "pos": "end", "temp": True})
+            # Wait for resp
+            while not queue_resp:
+                sio.sleep(0.1)
+            queue_resp = None
+        print('Disconnecting...')
         sio.disconnect()
 
-    # sio makes use of built in callbacks, i.e. sio.on calls. 
-    # Flow:
-    # .connect -> connect() -> channel_opts() -> login()
-    sio.connect(socket_url)
+    @sio.on('queue')
+    @sio.on('queueWarn')
+    @sio.on('queueFail')
+    def queue(resp):
+        print(f'queue: {resp}')
+        global queue_resp
+        queue_resp = resp
 
+    @sio.event
+    def connect_error():
+        print("Socket connection error.")
+
+    @sio.event
+    def disconnect():
+        print("Socket disconnected.")
+
+    sio.connect(socket_url)
     sio.wait()
 
 if __name__ == '__main__':
