@@ -22,4 +22,13 @@ channel_id_2
 ```
 
 # Running
+## Docker compose
 `docker-compose up`
+## No docker
+Assuming bash shell:
+```
+python -m virtualenv venv
+source venv/Scripts/activate
+pip install -r requirements.txt
+python main.py
+```
