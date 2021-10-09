@@ -16,8 +16,14 @@
     "url": "https://github.com/suicidejunkie/content-finder/issues"
   },
   "homepage": "https://github.com/suicidejunkie/content-finder#readme",
+  "engines": {
+    "node": "16"
+  },
   "dependencies": {
+    "add-dependencies": "^1.1.0",
     "dotenv": "^10.0.0",
-    "sqlite3": "^5.0.2"
+    "line-by-line": "^0.1.6",
+    "sqlite3": "^5.0.2",
+    "xml2js": "^0.4.23"
   }
 }
