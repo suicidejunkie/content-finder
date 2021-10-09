@@ -9,8 +9,7 @@ from bs4 import BeautifulSoup as bs
 
 load_dotenv()
 
-CONNECTED = False
-
+sio = socketio.Client()
 con = sqlite3.connect('content.db')
 
 def init_db() -> None:
@@ -121,14 +120,12 @@ def add_to_cytube(content_list: list) -> None:
     if not socket_url:
         raise socketio.exception.ConnectionError('Unable to find a secure socket to connect to')
 
-    sio = socketio.Client()
-
     # built in events
     @sio.event
     def connect():
         print("I'm connected!")
-        global CONNECTED
-        CONNECTED = True
+        global sio
+        sio.emit('joinChannel', {'name': channel_name})
 
     @sio.event
     def connect_error(data):
@@ -142,37 +139,28 @@ def add_to_cytube(content_list: list) -> None:
 
     # rec'd when connected to channel
     @sio.on('channelOpts')
-    def on_connect(resp):
+    def channel_opts(resp):
         print(resp)
+        global sio
+        sio.emit('login', {"name": cytube_username, "pw": cytube_password})
 
     # rec'd when logging in
     @sio.on('login')
-    def on_connect(resp):
+    def login(resp):
         print(resp)
+        global sio
+        for contents in content_list:
+            sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
+            sio.sleep(0.1)
 
-    # playlist as json
-    @sio.on('playlist')
-    def on_connect(resp):
-        print(resp)
+        sio.disconnect()
 
+    # sio makes use of built in callbacks, i.e. sio.on calls. 
+    # Flow:
+    # .connect -> connect() -> channel_opts() -> login()
     sio.connect(socket_url)
 
-    # .connect doesn't block, and in this version I can't force it to
-    # Hence this solution...
-    while not CONNECTED:
-        sio.sleep(1)
-
-    sio.sleep(1)
-    sio.emit('joinChannel', {'name': channel_name})
-    sio.sleep(1)
-    sio.emit('login', {"name": cytube_username, "pw": cytube_password})
-    sio.sleep(1)
-
-    for contents in content_list:
-        sio.emit('queue', {"id": contents, "type": "yt", "pos": "end", "temp": True})
-        sio.sleep(0.1)
-
-    sio.disconnect()
+    sio.wait()
 
 if __name__ == '__main__':
     init_db()
