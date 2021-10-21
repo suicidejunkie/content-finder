@@ -17,6 +17,8 @@ class ContentFinder:
         self.last_updated = None
         self.sio = socketio.Client()
         self.queue_resp = None
+        self.queue_err = False  # To avoid issues with different threads (i.e. main and error thread) changing queue_resp
+                                # while another thread is waiting for it to have a specific value
         self.lock = False
 
         self.url = os.getenv('CYTUBE_URL')
@@ -36,11 +38,11 @@ class ContentFinder:
         resp = requests.get(socketConfig)
         print(f'resp: {resp.status_code} - {resp.reason}')
         servers = resp.json()
-        socket_url = ""
+        socket_url = ''
 
         for server in servers['servers']:
-            if server["secure"]:
-                socket_url = server["url"]
+            if server['secure']:
+                socket_url = server['url']
                 break
         
         if not socket_url:
@@ -138,13 +140,13 @@ class ContentFinder:
     def listen(self) -> None:
         @self.sio.event
         def connect():
-            print("I'm connected!")
+            print('Socket connected!')
             self.sio.emit('joinChannel', {'name': self.channel_name})
 
         @self.sio.on('channelOpts')
         def channel_opts(resp):
             print(resp)
-            self.sio.emit('login', {"name": self.cytube_username, "pw": self.cytube_password})
+            self.sio.emit('login', {'name': self.cytube_username, 'pw': self.cytube_password})
 
         @self.sio.on('login')
         def login(resp):
@@ -180,33 +182,46 @@ class ContentFinder:
                     self.sio.emit('chatMsg', {'msg': f'Adding {len(content_list)} videos.'})
 
                 for content in content_list:
-                    self.sio.emit('queue', {"id": content, "type": "yt", "pos": "end", "temp": True})
-                    print('waiting to add more content')
+                    self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
                     # Wait for resp
                     while not self.queue_resp:
-                        self.sio.sleep(0.1)
+                        self.sio.sleep(0.3)
                     self.queue_resp = None
                 self.lock = False
-            elif resp['msg'] == '!kill_content' and resp['username'] in self.admins and chat_ts > delta:
-                self.sio.emit('chatMsg', {'msg': 'Bye bye'})
+            elif resp['msg'] == '!kill' and resp['username'] in self.admins and chat_ts > delta:
+                self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
                 self.sio.disconnect()
 
         @self.sio.on('queue')
-        @self.sio.on('queueWarn')
-        @self.sio.on('queueFail')
         def queue(resp):
             print(f'queue: {resp}')
+            self.queue_err = False
             self.queue_resp = resp
+
+        @self.sio.on('queueWarn')
+        @self.sio.on('queueFail')
+        def queue_err(resp):
+            self.queue_err = True
+            print(f'queue err: {resp}')
+            try:
+                id = resp['id']
+                self.sio.emit('chatMsg', {'msg': f'Failed to add {id}, retrying in 2 secs.'})
+                self.sio.sleep(2)
+                self.sio.emit('queue', {'id': id, 'type': 'yt', 'pos': 'end', 'temp': True})
+                while self.queue_err:
+                    self.sio.sleep(0.1)
+            except KeyError as err:
+                print('queue err doesn\'t contain key "id"')
 
         @self.sio.event
         def connect_error():
-            print("Socket connection error. Attempting reconnect.")
+            print('Socket connection error. Attempting reconnect.')
             # socket_url = self._init_socket()
             # self.sio.connect(socket_url)
 
         @self.sio.event
         def disconnect():
-            print("Socket disconnected. Attempting reconnect.")
+            print('Socket disconnected. Attempting reconnect.')
             # socket_url = self._init_socket()
             # self.sio.connect(socket_url)
 
