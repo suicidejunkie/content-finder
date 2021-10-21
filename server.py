@@ -193,12 +193,17 @@ class ContentFinder:
                 self.sio.disconnect()
 
         @self.sio.on('queue')
+        @self.sio.on('queueWarn')
         def queue(resp):
+            """
+            We're making the assumption that queueWarn is stuff like 'already in queue'
+            and other senisble warning-esque messages i.e. that they're warnings that
+            don't really matter to us because the content has been added.
+            """
             print(f'queue: {resp}')
             self.queue_err = False
             self.queue_resp = resp
 
-        @self.sio.on('queueWarn')
         @self.sio.on('queueFail')
         def queue_err(resp):
             self.queue_err = True
