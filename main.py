@@ -26,6 +26,10 @@ class ContentFinder:
         self.cytube_password = os.getenv('CYTUBE_PASSWORD')
         self.admins = os.getenv('ADMINS').split(',')
 
+        # If no value in .env then replace None with empty list
+        self.admins = self.admins if self.admins is not None else []
+
+
     def _init_db(self) -> None:
         """
         Establish connection to DB, access via self.con
@@ -185,12 +189,13 @@ class ContentFinder:
         def chat(resp):
             print(resp)
             chat_ts = datetime.fromtimestamp(resp['time']/1000)
-            delta = datetime.now() - timedelta(seconds=20)
-            if resp['msg'] == '!content' and chat_ts > delta:
-                if self.lock:
-                    self.sio.emit('chatMsg', {'msg': 'Already collecting content'})
-                    return
+            delta = datetime.now() - timedelta(seconds=10)
 
+            if self.lock:
+                self.sio.emit('chatMsg', {'msg': 'Currently collecting content, please wait...'})
+                return
+
+            if resp['msg'] == '!content' and chat_ts > delta:
                 self._init_db()
                 cur = self.con.cursor()
 
