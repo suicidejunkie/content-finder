@@ -51,7 +51,6 @@ class ContentFinder:
         return socket_url
 
     def pop_db(self) -> None:
-        print('pop_db')
         self._init_db()
 
         cur = self.con.cursor()
@@ -88,9 +87,9 @@ class ContentFinder:
         self.con.close()
 
     def find_content(self) -> list:
-        print('find_content()')
         self._init_db()
-        content = []
+        content = {}  # contnet = {id: (datetime, [video_id_1, video_id_2...])}
+        count = 0
         cur = self.con.cursor()
 
         cur.execute('SELECT * FROM content')
@@ -105,6 +104,7 @@ class ContentFinder:
             page = resp.text
             soup = bs(page, 'lxml')
 
+            video_ids = []
             new_dt = None
             for item in soup.find_all('entry'):
                 if '#shorts' in item.find_all('title')[0].text:
@@ -119,23 +119,19 @@ class ContentFinder:
                 video_id = item.find_all('yt:videoid')[0].text
 
                 # Insert in reverse order so vids are in the order they were
-                content.insert(0, video_id)
+                video_ids.insert(0, video_id)
 
                 # Set new datetime for DB
                 if not new_dt:
                     new_dt = published
 
-            if new_dt:
-                # Update datetime in DB
-                update_cur = self.con.cursor()
-                update_cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
-                                  (str(new_dt), channel_id,))
-                self.con.commit()
-                update_cur.close()
+            count += len(video_ids)
+            content[channel_id] = (new_dt, video_ids)
+
         cur.close()
         self.con.close()
 
-        return content
+        return content, count
 
     def listen(self) -> None:
         @self.sio.event
@@ -168,26 +164,44 @@ class ContentFinder:
                     self.sio.emit('chatMsg', {'msg': 'Already collecting content'})
                     return
 
+                self._init_db()
+                cur = self.con.cursor()
+
                 self.sio.emit('chatMsg', {'msg': 'Searching for content...'})
 
                 self.lock = True
                 self.pop_db()
-                content_list = self.find_content()
+                content, count = self.find_content()
 
-                if not content_list:
+                if count == 0:
                     print('**** No content to add ****')
                     self.sio.emit('chatMsg', {'msg': 'No content to add.'})
                 else:
-                    print(f'**** Videos to be added: {len(content_list)} ****')
-                    self.sio.emit('chatMsg', {'msg': f'Adding {len(content_list)} videos.'})
+                    print(f'**** Videos to be added: {count} ****')
+                    self.sio.emit('chatMsg', {'msg': f'Adding {count} videos.'})
 
-                for content in content_list:
-                    self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
-                    # Wait for resp
-                    while not self.queue_resp:
-                        self.sio.sleep(0.3)
-                    self.queue_resp = None
-                self.lock = False
+                    for key, val in content.items():
+                        new_dt = val[0]
+                        content_list = val[1]
+                    
+
+                        for content in content_list:
+                            self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
+                            # Wait for resp
+                            while not self.queue_resp:
+                                self.sio.sleep(0.3)
+                            self.queue_resp = None
+
+                        cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
+                                          (str(new_dt), key,))
+                        self.con.commit()
+                    
+                    # Close thread sensitive resources & unlock
+                    cur.close()
+                    self.con.close()
+                    self.lock = False
+
+                    self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
             elif resp['msg'] == '!kill' and resp['username'] in self.admins and chat_ts > delta:
                 self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
                 self.sio.disconnect()
