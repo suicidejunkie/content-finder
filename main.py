@@ -14,21 +14,18 @@ class ContentFinder:
     def __init__(self) -> None:
         self.con = None  # Due to threading with sockets we can't init here...
         self.last_updated = None
-        self.sio = socketio.Client()
+        self.sio = socketio.Client()  # For debugging: engineio_logger=True
         self.queue_resp = None
         self.queue_err = False  # To avoid issues with different threads (i.e. main and error thread) changing queue_resp
                                 # while another thread is waiting for it to have a specific value
         self.lock = False
+        self.users = {}
+        self.valid_commands = ['!content', '!kill']
 
         self.url = os.getenv('CYTUBE_URL')
         self.channel_name = os.getenv('CYTUBE_URL_CHANNEL_NAME')
         self.cytube_username = os.getenv('CYTUBE_USERNAME')
         self.cytube_password = os.getenv('CYTUBE_PASSWORD')
-        self.admins = os.getenv('ADMINS').split(',')
-
-        # If no value in .env then replace None with empty list
-        self.admins = self.admins if self.admins is not None else []
-
 
     def _init_db(self) -> None:
         """
@@ -111,7 +108,7 @@ class ContentFinder:
 
     def find_content(self) -> list:
         self._init_db()
-        content = {}  # contnet = {id: (datetime, [video_id_1, video_id_2...])}
+        content = {}  # content = {id: (datetime, [video_id_1, video_id_2...])}
         count = 0
         cur = self.con.cursor()
 
@@ -178,12 +175,23 @@ class ContentFinder:
         @self.sio.on('login')
         def login(resp):
             print(resp)
-            self.sio.emit('channelRanks')
+            # self.sio.emit('channelRanks')
             self.sio.emit('chatMsg', {'msg': 'Hello!'})
 
-        @self.sio.on('channelRanks')
-        def test(resp):
-            print('test: ' + resp)
+        @self.sio.on('userlist')
+        def userlist(resp):
+            for user in resp:
+                self.users[user['name']] = user['rank']
+
+        @self.sio.on('addUser')
+        @self.sio.on('setUserRank')
+        def user_add(resp):
+            self.users[resp['name']] = resp['rank']
+
+        @self.sio.on('userLeave')
+        def user_leave(resp):
+             # Avoiding del since we don't really care if a user who left isn'tin the dict
+            self.users.pop(resp['name'], None)
 
         @self.sio.on('chatMsg')
         def chat(resp):
@@ -191,11 +199,19 @@ class ContentFinder:
             chat_ts = datetime.fromtimestamp(resp['time']/1000)
             delta = datetime.now() - timedelta(seconds=10)
 
+            # Ignore older messages and messages that aren't valid commands
+            if chat_ts < delta or resp['msg'] not in self.valid_commands:
+                return
+
+            if self.users.get(resp['username'], 0) < 3:
+                self.sio.emit('chatMsg', {'msg': 'You don\'t have permission to do that.'})
+                return
+
             if self.lock:
                 self.sio.emit('chatMsg', {'msg': 'Currently collecting content, please wait...'})
                 return
 
-            if resp['msg'] == '!content' and chat_ts > delta:
+            if resp['msg'] == '!content':
                 self._init_db()
                 cur = self.con.cursor()
 
@@ -234,8 +250,10 @@ class ContentFinder:
                     self.lock = False
 
                     self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
-            elif resp['msg'] == '!kill' and resp['username'] in self.admins and chat_ts > delta:
+            elif resp['msg'] == '!kill':
+                self.lock = True
                 self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
+                self.sio.sleep(3)  # temp sol to allow the chat msg to send
                 self.sio.disconnect()
 
         @self.sio.on('queue')
@@ -261,18 +279,18 @@ class ContentFinder:
                 self.sio.emit('queue', {'id': id, 'type': 'yt', 'pos': 'end', 'temp': True})
                 while self.queue_err:
                     self.sio.sleep(0.1)
-            except KeyError as err:
+            except KeyError:
                 print('queue err doesn\'t contain key "id"')
 
         @self.sio.event
         def connect_error():
             print('Socket connection error. Attempting reconnect.')
-            # socket_url = self._init_socket()
-            # self.sio.connect(socket_url)
+            socket_url = self._init_socket()
+            self.sio.connect(socket_url)
 
         @self.sio.event
         def disconnect():
-            print('Socket disconnected. Attempting reconnect.')
+            print('Socket disconnected.')
             # socket_url = self._init_socket()
             # self.sio.connect(socket_url)
 

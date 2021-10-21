@@ -12,11 +12,6 @@ CYTUBE_URL_CHANNEL_NAME=my_channel
 CYTUBE_USERNAME=my_username
 CYTUBE_PASSWORD=my_password
 ```
-Optional `.env` config:
-```
-ADMINS=username1,username2  # Allows closing the bot from chat
-                            # This is hopefully a temp solution
-```
 ### Channels
 Add channel ids and channel names to `channel-ids.txt`, e.g.:
 ```
