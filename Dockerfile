@@ -6,10 +6,10 @@ COPY ./requirements.txt .
 
 RUN python -m pip install -r requirements.txt
 
-COPY ./server.py .
+COPY ./main.py .
 
 COPY ./.env .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "server.py"]
+CMD ["python", "main.py"]
