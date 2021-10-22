@@ -115,17 +115,18 @@ class ChatBot:
                 return
 
             if resp['msg'] == '!content':
+                self.lock = True
                 con, cur = self.db.init_db()
 
                 self.sio.emit('chatMsg', {'msg': 'Searching for content...'})
 
-                self.lock = True
                 self.db.pop_db()
                 content, count = self.content_finder.find_content()
 
                 if count == 0:
                     print('**** No content to add ****')
                     self.sio.emit('chatMsg', {'msg': 'No content to add.'})
+                    self.lock = False
                     return
 
                 print(f'**** Videos to be added: {count} ****')
