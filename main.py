@@ -12,7 +12,6 @@ load_dotenv()
 
 class ContentFinder:
     def __init__(self) -> None:
-        self.con = None  # Due to threading with sockets we can't init here...
         self.last_updated = None
         self.sio = socketio.Client()  # For debugging: engineio_logger=True
         self.queue_resp = None
@@ -27,22 +26,27 @@ class ContentFinder:
         self.cytube_username = os.getenv('CYTUBE_USERNAME')
         self.cytube_password = os.getenv('CYTUBE_PASSWORD')
 
-    def _init_db(self) -> None:
+    def _init_db(self) -> tuple[sqlite3.Connection, sqlite3.Cursor]:
         """
-        Establish connection to DB, access via self.con
+        Establish connection to DB.
+
+        returns:
+            A tuple containing a connection to the DB and a cursor.
         """
-        self.con = sqlite3.connect('content.db')
-        cur = self.con.cursor()
+        con = sqlite3.connect('content.db')
+        cur = con.cursor()
         cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text primary key, name text, datetime text)')
-        self.con.commit()
-        cur.close()
+        con.commit()
+        # cur.close()
+
+        return con, cur
 
     def _init_socket(self) -> str:
         """
         Finds the socket conn for channel given in .env -  this method does NOT connect.
 
         returns:
-            socket_url: str containing the url of the socket server
+            A str containing the url of the socket server.
         """
         socketConfig = f'{self.url}socketconfig/{self.channel_name}.json'
         resp = requests.get(socketConfig)
@@ -70,9 +74,9 @@ class ContentFinder:
         # CHANNEL_NAME
         CHANNEL_NAME
         """
-        self._init_db()
+        con, cur = self._init_db()
 
-        cur = self.con.cursor()
+        # cur = con.cursor()
 
         updated = os.path.getmtime(os.path.dirname(os.path.realpath(__file__)))
 
@@ -98,19 +102,26 @@ class ContentFinder:
                 try:
                     cur.execute('INSERT INTO content(channelId, name, datetime) VALUES(?,?,?)',
                                (channel_id, name, published,))
-                    self.con.commit()
+                    con.commit()
                 except sqlite3.IntegrityError:
                     print(f'{name} already in db, skipping.')
 
         self.last_updated = updated
         cur.close()
-        self.con.close()
+        con.close()
 
-    def find_content(self) -> list:
-        self._init_db()
-        content = {}  # content = {id: (datetime, [video_id_1, video_id_2...])}
+    def find_content(self) -> tuple[dict, int]:
+        """
+        returns:
+            A tuple containing the content dict and a count of the amount of new content found.
+            Content dict comes in the form:
+            {
+                'channel_id': (datetime, [video_id_1, video_id_2])
+            }
+        """
+        con, cur = self._init_db()
+        content = {}
         count = 0
-        cur = self.con.cursor()
 
         cur.execute('SELECT * FROM content')
         for row in cur:
@@ -149,7 +160,7 @@ class ContentFinder:
             content[channel_id] = (new_dt, video_ids)
 
         cur.close()
-        self.con.close()
+        con.close()
 
         return content, count
 
@@ -212,8 +223,7 @@ class ContentFinder:
                 return
 
             if resp['msg'] == '!content':
-                self._init_db()
-                cur = self.con.cursor()
+                con, cur = self._init_db()
 
                 self.sio.emit('chatMsg', {'msg': 'Searching for content...'})
 
@@ -224,32 +234,33 @@ class ContentFinder:
                 if count == 0:
                     print('**** No content to add ****')
                     self.sio.emit('chatMsg', {'msg': 'No content to add.'})
-                else:
-                    print(f'**** Videos to be added: {count} ****')
-                    self.sio.emit('chatMsg', {'msg': f'Adding {count} videos.'})
+                    return
 
-                    for key, val in content.items():
-                        new_dt = val[0]
-                        content_list = val[1]
+                print(f'**** Videos to be added: {count} ****')
+                self.sio.emit('chatMsg', {'msg': f'Adding {count} videos.'})
+
+                for key, val in content.items():
+                    new_dt = val[0]
+                    content_list = val[1]
+                
+
+                    for content in content_list:
+                        self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
+                        # Wait for resp
+                        while not self.queue_resp:
+                            self.sio.sleep(0.3)
+                        self.queue_resp = None
+
+                    cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
+                                (str(new_dt), key,))
+                    con.commit()
                     
+                # Close thread sensitive resources & unlock
+                cur.close()
+                con.close()
+                self.lock = False
 
-                        for content in content_list:
-                            self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
-                            # Wait for resp
-                            while not self.queue_resp:
-                                self.sio.sleep(0.3)
-                            self.queue_resp = None
-
-                        cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
-                                          (str(new_dt), key,))
-                        self.con.commit()
-                    
-                    # Close thread sensitive resources & unlock
-                    cur.close()
-                    self.con.close()
-                    self.lock = False
-
-                    self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
+                self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
             elif resp['msg'] == '!kill':
                 self.lock = True
                 self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
@@ -291,8 +302,6 @@ class ContentFinder:
         @self.sio.event
         def disconnect():
             print('Socket disconnected.')
-            # socket_url = self._init_socket()
-            # self.sio.connect(socket_url)
 
         socket_url = self._init_socket()
         self.sio.connect(socket_url)
