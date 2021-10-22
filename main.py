@@ -15,8 +15,11 @@ class ContentFinder:
         self.last_updated = None
         self.sio = socketio.Client()  # For debugging: engineio_logger=True
         self.queue_resp = None
-        self.queue_err = False  # To avoid issues with different threads (i.e. main and error thread) changing queue_resp
-                                # while another thread is waiting for it to have a specific value
+
+        # To avoid issues with different threads (i.e. main and error thread)
+        # changing queue_resp while another thread is waiting for it to have a
+        # specific value
+        self.queue_err = False
         self.lock = False
         self.users = {}
         self.valid_commands = ['!content', '!kill']
@@ -35,9 +38,9 @@ class ContentFinder:
         """
         con = sqlite3.connect('content.db')
         cur = con.cursor()
-        cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text primary key, name text, datetime text)')
+        cur.execute('CREATE TABLE IF NOT EXISTS content (channelId text '
+                    'primary key, name text, datetime text)')
         con.commit()
-        # cur.close()
 
         return con, cur
 
@@ -58,7 +61,7 @@ class ContentFinder:
             if server['secure']:
                 socket_url = server['url']
                 break
-        
+
         if not socket_url:
             raise socketio.exception.ConnectionError('Unable to find a secure socket to connect to')
 
@@ -67,7 +70,7 @@ class ContentFinder:
     def pop_db(self) -> None:
         """
         Reads from channel-ids.txt and inserts into DB. Inserts date of most recent video.
-    
+
         channels-ids.txt must be in the form:
         # CHANNEL_NAME
         CHANNEL_ID
@@ -129,7 +132,7 @@ class ContentFinder:
             name = row[1]
             dt = datetime.fromisoformat(row[2])
             print(f'Getting content for: {name}')
-            
+
             channel = f'https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}'
             resp = requests.get(channel)
             page = resp.text
@@ -201,7 +204,7 @@ class ContentFinder:
 
         @self.sio.on('userLeave')
         def user_leave(resp):
-             # Avoiding del since we don't really care if a user who left isn'tin the dict
+            # Avoiding del since we don't really care if a user who left isn'tin the dict
             self.users.pop(resp['name'], None)
 
         @self.sio.on('chatMsg')
@@ -242,7 +245,6 @@ class ContentFinder:
                 for key, val in content.items():
                     new_dt = val[0]
                     content_list = val[1]
-                
 
                     for content in content_list:
                         self.sio.emit('queue', {'id': content, 'type': 'yt', 'pos': 'end', 'temp': True})
@@ -251,10 +253,11 @@ class ContentFinder:
                             self.sio.sleep(0.3)
                         self.queue_resp = None
 
-                    cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
-                                (str(new_dt), key,))
-                    con.commit()
-                    
+                    if new_dt:
+                        cur.execute('UPDATE content SET datetime = ? WHERE channelId = ?',
+                                    (str(new_dt), key,))
+                        con.commit()
+
                 # Close thread sensitive resources & unlock
                 cur.close()
                 con.close()
@@ -281,6 +284,10 @@ class ContentFinder:
 
         @self.sio.on('queueFail')
         def queue_err(resp):
+            if resp['msg'] == 'This item is already on the playlist':
+                self.queue_resp = resp
+                return
+
             self.queue_err = True
             print(f'queue err: {resp}')
             try:
@@ -307,6 +314,7 @@ class ContentFinder:
         self.sio.connect(socket_url)
         self.sio.wait()
 
+
 if __name__ == '__main__':
-    content = ContentFinder()
-    content.listen()
+    content_finder = ContentFinder()
+    content_finder.listen()
