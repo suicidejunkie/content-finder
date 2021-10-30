@@ -1,15 +1,16 @@
-FROM python:3.9-slim-buster
+FROM python:3.10-slim-buster
 
 WORKDIR /app
 
 COPY ./requirements.txt .
+COPY ./setup.py .
 
-RUN python -m pip install -r requirements.txt
+RUN python -m pip install -e .
 
-COPY ./main.py .
+COPY ./cytubebot ./cytubebot
 
 COPY ./.env .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "main.py"]
+CMD ["python", "cytubebot/main.py"]
