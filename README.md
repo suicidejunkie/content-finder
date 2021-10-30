@@ -24,9 +24,9 @@ channel_id_1
 channel_id_2
 ```
 ## Running
-I strongly recommend adding admins to the `.env` file and stopping the bot with `!kill` in chat.
+I strongly stopping the bot with `!kill` in chat since this will handle closing all resources properly, but killing the containers/scripts outright is usually fine so long as the DB isn't being written to at the time.
 ### Docker compose
-Start: `docker-compose up -d`
+Start: `docker-compose up -d`  
 Stop: `docker-compose down`
 ### No docker
 You **MUST** edit `DB_FILE` in `cytubebot/contentfinder/conf.ini` file correctly or everything will explode - I would recommend a full path but for relative, it must be relative to `cytube/contentfinder/database.py` (untested but `../../content.db` should work.)
@@ -35,7 +35,7 @@ Assuming bash shell on linux (for bash on windows `source venv/Scripts/activate`
 ```
 python -m virtualenv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt  OR  pip install -e .
 python cytubebot/main.py
 ```
-ctrl+c to kill script.
+Use `-r requirements.txt` for dev environment (assuming your IDE can resolve the paths properly) else use `pip install -e .`
