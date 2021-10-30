@@ -99,9 +99,10 @@ class ChatBot:
             print(resp)
             chat_ts = datetime.fromtimestamp(resp['time']/1000)
             delta = datetime.now() - timedelta(seconds=10)
+            command = resp['msg'].casefold()
 
             # Ignore older messages and messages that aren't valid commands
-            if chat_ts < delta or resp['msg'] not in self.valid_commands:
+            if chat_ts < delta or command not in self.valid_commands:
                 return
 
             if self.users.get(resp['username'], 0) < 3:
@@ -114,53 +115,55 @@ class ChatBot:
                 self.sio.emit('chatMsg', {'msg': msg})
                 return
 
-            if resp['msg'] == '!content':
-                self.lock = True
-                con, cur = self.db.init_db()
+            match command:
+                case '!content':
+                    self.lock = True
+                    con, cur = self.db.init_db()
 
-                self.sio.emit('chatMsg', {'msg': 'Searching for content...'})
+                    self.sio.emit('chatMsg', {'msg': 'Searching for content...'})
 
-                self.db.pop_db()
-                content, count = self.content_finder.find_content()
+                    self.db.pop_db()
+                    content, count = self.content_finder.find_content()
 
-                if count == 0:
-                    print('**** No content to add ****')
-                    self.sio.emit('chatMsg', {'msg': 'No content to add.'})
+                    if count == 0:
+                        self.sio.emit('chatMsg', {'msg': 'No content to add.'})
+                        self.lock = False
+                        return
+
+                    self.sio.emit('chatMsg', {'msg': f'Adding {count} videos.'})
+
+                    for key, val in content.items():
+                        new_dt = val[0]
+                        content_list = val[1]
+
+                        for content in content_list:
+                            self.sio.emit('queue', {'id': content, 'type': 'yt',
+                                                    'pos': 'end', 'temp': True})
+                            # Wait for resp
+                            while not self.queue_resp:
+                                self.sio.sleep(0.3)
+                            self.queue_resp = None
+
+                        if new_dt:
+                            query = ('UPDATE content SET datetime = ? WHERE '
+                                    'channelId = ?')
+                            cur.execute(query, (str(new_dt), key,))
+                            con.commit()
+
+                    # Close thread sensitive resources & unlock
+                    cur.close()
+                    con.close()
                     self.lock = False
-                    return
 
-                print(f'**** Videos to be added: {count} ****')
-                self.sio.emit('chatMsg', {'msg': f'Adding {count} videos.'})
-
-                for key, val in content.items():
-                    new_dt = val[0]
-                    content_list = val[1]
-
-                    for content in content_list:
-                        self.sio.emit('queue', {'id': content, 'type': 'yt',
-                                                'pos': 'end', 'temp': True})
-                        # Wait for resp
-                        while not self.queue_resp:
-                            self.sio.sleep(0.3)
-                        self.queue_resp = None
-
-                    if new_dt:
-                        query = ('UPDATE content SET datetime = ? WHERE '
-                                 'channelId = ?')
-                        cur.execute(query, (str(new_dt), key,))
-                        con.commit()
-
-                # Close thread sensitive resources & unlock
-                cur.close()
-                con.close()
-                self.lock = False
-
-                self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
-            elif resp['msg'] == '!kill':
-                self.lock = True
-                self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
-                self.sio.sleep(3)  # temp sol to allow the chat msg to send
-                self.sio.disconnect()
+                    self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
+                case '!kill':
+                    self.lock = True
+                    self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
+                    self.sio.sleep(3)  # temp sol to allow the chat msg to send
+                    self.sio.disconnect()
+                case _:
+                    msg = f'Missing case for command {resp["msg"]}'
+                    self.sio.emit('chatMsg', {'msg': msg})
 
         @self.sio.on('queue')
         @self.sio.on('queueWarn')
