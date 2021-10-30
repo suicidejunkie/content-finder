@@ -37,7 +37,7 @@ class ContentFinder:
             video_ids = []
             new_dt = None
             for item in soup.find_all('entry'):
-                if '#shorts' in item.find_all('title')[0].text:
+                if '#shorts' in item.find_all('title')[0].text.casefold():
                     print('Skipping #short.')
                     continue
 
