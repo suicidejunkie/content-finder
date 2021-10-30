@@ -1,9 +1,9 @@
 import requests
 import socketio
 from datetime import datetime, timedelta
-from exceptions import MissingEnvVar
-from database import DBHandler
-from content_finder import ContentFinder
+from cytubebot.contentfinder.database import DBHandler
+from cytubebot.contentfinder.content_finder import ContentFinder
+from cytubebot.randomvideo.random_finder import RandomFinder
 
 
 class ChatBot:
@@ -12,10 +12,6 @@ class ChatBot:
         self.channel_name = channel_name
         self.username = username
         self.password = password
-
-        if not all([self.url, self.channel_name, self.username,
-                    self.password]):
-            raise MissingEnvVar('One/some of the env variables are missing.')
 
         self.sio = socketio.Client()  # For debugging: engineio_logger=True
         self.queue_resp = None
@@ -26,9 +22,11 @@ class ChatBot:
         self.queue_err = False
         self.lock = False
         self.users = {}
-        self.valid_commands = ['!content', '!kill']
+        self.valid_commands = ['!content', '!random', '!help', '!kill']
         self.db = DBHandler()
         self.content_finder = ContentFinder()
+
+        self.random_finder = RandomFinder()
 
     def _init_socket(self) -> str:
         """
@@ -99,7 +97,11 @@ class ChatBot:
             print(resp)
             chat_ts = datetime.fromtimestamp(resp['time']/1000)
             delta = datetime.now() - timedelta(seconds=10)
-            command = resp['msg'].casefold()
+            command = resp['msg'].split()[0].casefold()
+            try:
+                args = [x.casefold() for x in resp['msg'].split()[1:]]
+            except IndexError:
+                args = None
 
             # Ignore older messages and messages that aren't valid commands
             if chat_ts < delta or command not in self.valid_commands:
@@ -156,6 +158,34 @@ class ChatBot:
                     self.lock = False
 
                     self.sio.emit('chatMsg', {'msg': 'Finished adding content.'})
+                case '!random':
+                    # Not using any thread sensitive content but need to be
+                    # aware of self.queue_resp/queue_err etc.
+                    self.lock = True
+
+                    try:
+                        size = int(args[0]) if args else 3
+                    except ValueError:
+                        size = 3
+
+                    rand_id = self.random_finder.find_random(size)
+                    if rand_id:
+                        self.sio.emit('queue', {'id': rand_id, 'type': 'yt',
+                                                'pos': 'end', 'temp': True})
+                        while not self.queue_resp:
+                            self.sio.sleep(0.3)
+                        self.queue_resp = None
+
+                        msg = f'Added random vid: {rand_id}'
+                        self.sio.emit('chatMsg', {'msg': msg})
+                    else:
+                        msg = (f'Found no random videos.. Try again. '
+                               'If giving arg over 5, try reducing.')
+                        self.sio.emit('chatMsg', {'msg': msg})
+
+                    self.lock = False
+                case '!help':
+                    self.sio.emit('chatMsg', {'msg': 'TODO: this :)'})
                 case '!kill':
                     self.lock = True
                     self.sio.emit('chatMsg', {'msg': 'Bye bye!'})
@@ -175,6 +205,7 @@ class ChatBot:
         @self.sio.on('queueFail')
         def queue_err(resp):
             if resp['msg'] == 'This item is already on the playlist':
+                self.queue_err = False
                 self.queue_resp = resp
                 return
 
@@ -187,6 +218,9 @@ class ChatBot:
                 self.sio.sleep(2)
                 self.sio.emit('queue', {'id': id, 'type': 'yt', 'pos': 'end',
                                         'temp': True})
+                # TODO: This is effectively a recursive call if cytube returns
+                # errors, add a base case to kill the spawned threads and give
+                # up e.g. self.err_count and max_error = 5
                 while self.queue_err:
                     self.sio.sleep(0.1)
             except KeyError:

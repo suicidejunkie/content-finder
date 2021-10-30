@@ -1,7 +1,7 @@
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup as bs
-from database import DBHandler
+from cytubebot.contentfinder.database import DBHandler
 
 
 class ContentFinder:
